@@ -137,7 +137,7 @@ func readEnv(env string, prompt string, passmask bool) string {
 		return str
 	}
 	fmt.Fprint(os.Stderr, prompt)
-	strbyte, _ := terminal.ReadPassword(syscall.Stdin)
+	strbyte, _ := terminal.ReadPassword(int(syscall.Stdin))
 	fmt.Fprintln(os.Stderr)
 	str = string(strbyte)
 	return str
@@ -147,10 +147,10 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
-		state, _ := terminal.GetState(syscall.Stdin)
+		state, _ := terminal.GetState(int(syscall.Stdin))
 		<-c
 		// sig is a ^C, handle it
-		terminal.Restore(syscall.Stdin, state)
+		terminal.Restore(int(syscall.Stdin), state)
 		os.Exit(0)
 	}()
 

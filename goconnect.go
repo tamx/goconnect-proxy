@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -55,23 +56,34 @@ func auth(authenticate string, host string, username string, password string) st
 	return ""
 }
 
-func access(proxy string, host string, info string) (conn *tls.Conn, code int, authinfo string) {
+func access(proxy string, host string, ssl bool, info string) (net.Conn, int, string) {
 	log.SetFlags(log.Lshortfile)
 
-	conf := &tls.Config{
-		InsecureSkipVerify: true,
-	}
+	var conn net.Conn
+	if ssl {
+		conf := &tls.Config{
+			InsecureSkipVerify: true,
+		}
 
-	conn, err := tls.Dial("tcp", proxy, conf)
-	if err != nil {
-		log.Println(err)
-		return
+		conn2, err := tls.Dial("tcp", proxy, conf)
+		if err != nil {
+			log.Println(err)
+			return nil, 400, ""
+		}
+		conn = conn2
+	} else {
+		conn2, err := net.Dial("tcp", proxy)
+		if err != nil {
+			log.Println(err)
+			return nil, 400, ""
+		}
+		conn = conn2
 	}
 
 	n, err := conn.Write([]byte("CONNECT " + host + " HTTP/1.1\n" + info + "\n"))
 	if err != nil {
 		log.Println(n, err)
-		return
+		return nil, 400, ""
 	}
 
 	reader := bufio.NewReaderSize(conn, 4096)
@@ -143,23 +155,32 @@ func main() {
 	}()
 
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "goconnect [proxy host:port] [host:port]")
+		fmt.Fprintln(os.Stderr, "goconnect [proxy host:port[/ssl]] [host:port]")
 		return
 	}
 
 	// fmt.Fprintln(os.Stderr, "os.Args: ", os.Args)
 	proxy := os.Args[1]
 	host := os.Args[2]
-	if strings.Index(proxy, ":") == -1 {
-		proxy += ":443"
+	ssl := false
+	if strings.HasSuffix(proxy, "/ssl") {
+		ssl = true
+		proxy = proxy[:len(proxy)-4]
 	}
-	conn, code, authinfo := access(proxy, host, "")
+	if strings.Index(proxy, ":") == -1 {
+		if ssl {
+			proxy += ":443"
+		} else {
+			proxy += ":8080"
+		}
+	}
+	conn, code, authinfo := access(proxy, host, ssl, "")
 	if code == 407 {
 		user := readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
 		password := readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
 		info := auth(authinfo, host, user, password)
 		info = "Proxy-Authorization: " + info + "\n"
-		conn, code, _ = access(proxy, host, info)
+		conn, code, _ = access(proxy, host, ssl, info)
 		if code == 407 {
 			return
 		}

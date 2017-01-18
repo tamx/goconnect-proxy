@@ -143,6 +143,31 @@ func readEnv(env string, prompt string, passmask bool) string {
 	return str
 }
 
+func fire(reader io.Reader, writer io.Writer, proxy string, host string, ssl bool, user string, password string) int {
+	conn, code, authinfo := access(proxy, host, ssl, "")
+	if code == 407 {
+		if user == "" {
+			return code
+		}
+		info := auth(authinfo, host, user, password)
+		info = "Proxy-Authorization: " + info + "\n"
+		conn, code, _ = access(proxy, host, ssl, info)
+		if code == 407 {
+			fmt.Fprintln(os.Stderr, "Auth Error!")
+			return code
+		}
+	}
+	// fmt.Fprintln(os.Stderr, "exec")
+	defer conn.Close()
+	// go io.Copy(conn, os.Stdout)
+	// io.Copy(os.Stdin, conn)
+	if reader != nil && writer != nil {
+		go pipe(conn, writer)
+		pipe(reader, conn)
+	}
+	return code
+}
+
 func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -154,15 +179,28 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if len(os.Args) < 3 {
+	// fmt.Fprintln(os.Stderr, "os.Args: ", os.Args)
+	port := ""
+	proxy := ""
+	host := ""
+	ssl := false
+
+	for i := 1; i < len(os.Args); i++ {
+		param := os.Args[i]
+		if param == "-P" {
+			i++
+			port = os.Args[i]
+		} else if proxy == "" {
+			proxy = param
+		} else {
+			host = param
+		}
+	}
+	if host == "" {
 		fmt.Fprintln(os.Stderr, "goconnect [proxy host:port[/ssl]] [host:port]")
 		return
 	}
 
-	// fmt.Fprintln(os.Stderr, "os.Args: ", os.Args)
-	proxy := os.Args[1]
-	host := os.Args[2]
-	ssl := false
 	if strings.HasSuffix(proxy, "/ssl") {
 		ssl = true
 		proxy = proxy[:len(proxy)-4]
@@ -174,21 +212,31 @@ func main() {
 			proxy += ":8080"
 		}
 	}
-	conn, code, authinfo := access(proxy, host, ssl, "")
-	if code == 407 {
-		user := readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
-		password := readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
-		info := auth(authinfo, host, user, password)
-		info = "Proxy-Authorization: " + info + "\n"
-		conn, code, _ = access(proxy, host, ssl, info)
+
+	if port == "" {
+		code := fire(os.Stdin, os.Stdout, proxy, host, ssl, "", "")
 		if code == 407 {
-			return
+			user := readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
+			password := readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
+			fire(os.Stdin, os.Stdout, proxy, host, ssl, user, password)
 		}
+		return
 	}
-	// fmt.Fprintln(os.Stderr, "exec")
-	defer conn.Close()
-	// go io.Copy(conn, os.Stdout)
-	// io.Copy(os.Stdin, conn)
-	go pipe(conn, os.Stdout)
-	pipe(os.Stdin, conn)
+
+	user := ""
+	password := ""
+	code := fire(nil, nil, proxy, host, ssl, "", "")
+	if code == 407 {
+		user = readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
+		password = readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
+	}
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", port)
+	listener, _ := net.ListenTCP("tcp", tcpAddr)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+		go fire(conn, conn, proxy, host, ssl, user, password)
+	}
 }

@@ -118,9 +118,9 @@ func access(proxy string, host string, ssl bool, info string) (net.Conn, int, st
 	return conn, 200, ""
 }
 
-func pipe(reader io.Reader, writer io.Writer) {
-	// defer writer.Close()
-	// defer reader.Close()
+func pipe(reader io.ReadCloser, writer io.WriteCloser) {
+	defer writer.Close()
+	defer reader.Close()
 	messageBuf := make([]byte, 1024)
 	for {
 		messageLen, err := reader.Read(messageBuf)
@@ -143,7 +143,7 @@ func readEnv(env string, prompt string, passmask bool) string {
 	return str
 }
 
-func fire(reader io.Reader, writer io.Writer, proxy string, host string, ssl bool, user string, password string) int {
+func fire(reader io.ReadCloser, writer io.WriteCloser, proxy string, host string, ssl bool, user string, password string) int {
 	conn, code, authinfo := access(proxy, host, ssl, "")
 	if code == 407 {
 		if user == "" {

@@ -111,7 +111,7 @@ func access(proxy string, host string, ssl bool, info string) (net.Conn, int, st
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			panic(err)
+			return nil, 400, ""
 		}
 	}
 
@@ -168,6 +168,18 @@ func fire(reader io.Reader, writer io.Writer, proxy string, host string, ssl boo
 	return code
 }
 
+func server(port string, host string, proxy string, ssl bool, user string, password string) {
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", port)
+	listener, _ := net.ListenTCP("tcp", tcpAddr)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+		go fire(conn, conn, proxy, host, ssl, user, password)
+	}
+}
+
 func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -180,7 +192,7 @@ func main() {
 	}()
 
 	// fmt.Fprintln(os.Stderr, "os.Args: ", os.Args)
-	port := ""
+	port := 0
 	proxy := ""
 	host := ""
 	ssl := false
@@ -188,16 +200,17 @@ func main() {
 	for i := 1; i < len(os.Args); i++ {
 		param := os.Args[i]
 		if param == "-P" {
+			port = i
 			i++
-			port = os.Args[i]
+			break
 		} else if proxy == "" {
 			proxy = param
 		} else {
 			host = param
 		}
 	}
-	if host == "" {
-		fmt.Fprintln(os.Stderr, "goconnect [proxy host:port[/ssl]] [host:port]")
+	if port == 0 && host == "" {
+		fmt.Fprintln(os.Stderr, "goconnect [proxyhost:port[/ssl]] [[-P host:port] host:port]")
 		return
 	}
 
@@ -213,7 +226,7 @@ func main() {
 		}
 	}
 
-	if port == "" {
+	if port == 0 {
 		code := fire(os.Stdin, os.Stdout, proxy, host, ssl, "", "")
 		if code == 407 {
 			user := readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
@@ -230,13 +243,17 @@ func main() {
 		user = readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
 		password = readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
 	}
-	tcpAddr, _ := net.ResolveTCPAddr("tcp", port)
-	listener, _ := net.ListenTCP("tcp", tcpAddr)
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
+	for i := port; i < len(os.Args); i++ {
+		if os.Args[i] == "-P" {
+			i++
+			port := os.Args[i]
+			i++
+			host := os.Args[i]
+			go server(port, host, proxy, ssl, user, password)
+		} else {
+			fmt.Println("Unknown option: " + os.Args[i])
 		}
-		go fire(conn, conn, proxy, host, ssl, user, password)
 	}
+	quit := make(chan bool)
+	<-quit
 }

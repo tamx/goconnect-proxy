@@ -127,7 +127,10 @@ func pipe(reader io.ReadCloser, writer io.WriteCloser) {
 		if err != nil {
 			break
 		}
-		writer.Write(messageBuf[:messageLen])
+		_, err = writer.Write(messageBuf[:messageLen])
+		if err != nil {
+			break
+		}
 	}
 }
 

@@ -121,10 +121,13 @@ func access(proxy string, host string, ssl bool, info string) (net.Conn, int, st
 func pipe(reader io.ReadCloser, writer io.WriteCloser) {
 	defer writer.Close()
 	defer reader.Close()
-	messageBuf := make([]byte, 1024)
+	messageBuf := make([]byte, 1024*1024)
 	for {
 		messageLen, err := reader.Read(messageBuf)
 		if err != nil {
+			break
+		}
+		if messageLen < 0 {
 			break
 		}
 		_, err = writer.Write(messageBuf[:messageLen])
@@ -165,8 +168,17 @@ func fire(reader io.ReadCloser, writer io.WriteCloser, proxy string, host string
 	// go io.Copy(conn, os.Stdout)
 	// io.Copy(os.Stdin, conn)
 	if reader != nil && writer != nil {
-		go pipe(conn, writer)
-		pipe(reader, conn)
+		c := make(chan int, 2)
+		go func() {
+			pipe(conn, writer)
+			c <- 0
+		}()
+		go func() {
+			pipe(reader, conn)
+			c <- 0
+		}()
+		<-c
+		<-c
 	}
 	return code
 }

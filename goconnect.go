@@ -130,9 +130,11 @@ func pipe(reader io.ReadCloser, writer io.WriteCloser) {
 		if messageLen < 0 {
 			break
 		}
-		_, err = writer.Write(messageBuf[:messageLen])
-		if err != nil {
-			break
+		if messageLen > 0 {
+			_, err = writer.Write(messageBuf[:messageLen])
+			if err != nil {
+				break
+			}
 		}
 	}
 }
@@ -195,6 +197,40 @@ func server(port string, host string, proxy string, ssl bool, user string, passw
 	}
 }
 
+func dynamic_server(port string, proxy string, ssl bool, user string, password string) {
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", port)
+	listener, _ := net.ListenTCP("tcp", tcpAddr)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+		header := ""
+		back_a := 0
+		for {
+			a := make([]byte, 1)
+			n, err := conn.Read(a)
+			if err != nil {
+				break
+			}
+			if n <= 0 {
+				break
+			}
+			header += string(a[0])
+			if back_a == '\n' && a[0] == '\r' {
+				conn.Read(a)
+				break
+			}
+			back_a = int(a[0])
+		}
+		host := header[8:]
+		host = host[:strings.Index(host, " ")]
+		fmt.Fprintln(os.Stdout, "in > "+host+":")
+		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		go fire(conn, conn, proxy, host, ssl, user, password)
+	}
+}
+
 func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -211,6 +247,7 @@ func main() {
 	proxy := ""
 	host := ""
 	ssl := false
+	dport := ""
 
 	for i := 1; i < len(os.Args); i++ {
 		param := os.Args[i]
@@ -218,6 +255,12 @@ func main() {
 			port = i
 			i++
 			break
+		} else if param == "-D" {
+			i++
+			dport = os.Args[i]
+			if port == 0 {
+				port = -1
+			}
 		} else if proxy == "" {
 			proxy = param
 		} else {
@@ -258,15 +301,20 @@ func main() {
 		user = readEnv("HTTP_PROXY_USER", "Username for Proxy auth: ", false)
 		password = readEnv("HTTP_PROXY_PASS", "Password for "+user+": ", true)
 	}
-	for i := port; i < len(os.Args); i++ {
-		if os.Args[i] == "-P" {
-			i++
-			port := os.Args[i]
-			i++
-			host := os.Args[i]
-			go server(port, host, proxy, ssl, user, password)
-		} else {
-			fmt.Println("Unknown option: " + os.Args[i])
+	if dport != "" {
+		go dynamic_server(dport, proxy, ssl, user, password)
+	}
+	if port > 0 {
+		for i := port; i < len(os.Args); i++ {
+			if os.Args[i] == "-P" {
+				i++
+				port := os.Args[i]
+				i++
+				host := os.Args[i]
+				go server(port, host, proxy, ssl, user, password)
+			} else {
+				fmt.Println("Unknown option: " + os.Args[i])
+			}
 		}
 	}
 	quit := make(chan bool)
